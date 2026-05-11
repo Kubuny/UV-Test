@@ -7,16 +7,16 @@ import re
 import time
 from datetime import datetime
 
-smbus = None
+smbus_module = None
 try:
     import smbus as _smbus  # type: ignore
-    smbus = _smbus
+    smbus_module = _smbus
 except ImportError:
     try:
         import smbus2 as _smbus  # type: ignore
-        smbus = _smbus
+        smbus_module = _smbus
     except ImportError:
-        smbus = None
+        smbus_module = None
 
 
 I2C_ADDR = 0x74
@@ -47,6 +47,8 @@ INTERVAL_MINUTES_MAP = {
     "05": 9,
     "06": 10,
 }
+STATIC_MODE_DURATION_MINUTES = 7
+DEFAULT_VARYING_MODE_DURATION_SECONDS = 60
 
 
 def get_next_log_index(output_dir):
@@ -68,9 +70,9 @@ def get_log_path(output_dir, mode_code, tint_code):
 
 class AS7331Sensor:
     def __init__(self, bus_num=1, i2c_addr=I2C_ADDR):
-        if smbus is None:
+        if smbus_module is None:
             raise RuntimeError("smbus/smbus2 is required. Install with: pip install smbus2")
-        self.bus = smbus.SMBus(bus_num)
+        self.bus = smbus_module.SMBus(bus_num)
         self.addr = i2c_addr
 
     def write_register(self, reg, value):
@@ -112,7 +114,7 @@ class AS7331Sensor:
 def resolve_duration_seconds(mode, duration_minutes, interval_code):
     if mode == "02":
         # Static mode is fixed to 7 minutes by mission requirement.
-        return 7 * 60
+        return STATIC_MODE_DURATION_MINUTES * 60
 
     if duration_minutes is not None:
         if not 1 <= duration_minutes <= 10:
@@ -120,7 +122,7 @@ def resolve_duration_seconds(mode, duration_minutes, interval_code):
         return duration_minutes * 60
 
     if interval_code is None:
-        return 60
+        return DEFAULT_VARYING_MODE_DURATION_SECONDS
 
     minutes = INTERVAL_MINUTES_MAP.get(interval_code)
     if minutes is None:
