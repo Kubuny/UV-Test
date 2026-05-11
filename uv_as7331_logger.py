@@ -5,7 +5,7 @@ from datetime import datetime
 
 import smbus2
 
-# AS7331 default I2C address (e.g., 0x74)
+# AS7331 default I2C address (0x74; adjust if your hardware uses a different address)
 AS7331_ADDR = 0x74
 
 # Register addresses (AS7331 datasheet example)
