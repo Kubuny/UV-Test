@@ -15,6 +15,8 @@ CREG3 = 0x08
 MRES1 = 0x02  # UVA
 MRES2 = 0x03  # UVB
 MRES3 = 0x04  # UVC
+DEFAULT_TINT_MS = 64
+WARMUP_SECONDS = DEFAULT_TINT_MS / 1000
 
 def read_uv(bus):
     # Read 16-bit value from 2 bytes (LSB, MSB)
@@ -51,7 +53,7 @@ def main():
     print("AS7331 UV sensor logger (one-shot)")
     try:
         setup_sensor(bus)
-        time.sleep(0.05)
+        time.sleep(WARMUP_SECONDS)
         uva, uvb, uvc = read_uv(bus)
         print(f"UVA: {uva}")
         print(f"UVB: {uvb}")

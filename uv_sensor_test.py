@@ -196,7 +196,8 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
             while time.time() - start < duration_seconds:
                 try:
                     last_err = None
-                    for _ in range(READ_RETRY_COUNT):
+                    retry_count = max(1, READ_RETRY_COUNT)
+                    for _ in range(retry_count):
                         try:
                             uva, uvb, uvc = sensor.read_uv()
                             break
@@ -204,6 +205,8 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
                             last_err = read_err
                             time.sleep(READ_RETRY_DELAY_SECONDS)
                     else:
+                        if last_err is None:
+                            raise RuntimeError("UV read failed without error details.")
                         raise last_err
 
                     if uva == 0 and uvb == 0 and uvc == 0:
