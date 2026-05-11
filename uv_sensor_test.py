@@ -39,6 +39,7 @@ TINT_MAP = {
 }
 
 INTERVAL_MINUTES_MAP = {
+    # Mirrors the existing mission interval-code behavior (01=1, 02-06=6-10 minutes).
     "01": 1,
     "02": 6,
     "03": 7,
@@ -110,6 +111,7 @@ class AS7331Sensor:
 
 def resolve_duration_seconds(mode, duration_minutes, interval_code):
     if mode == "02":
+        # Static mode is fixed to 7 minutes by mission requirement.
         return 7 * 60
 
     if duration_minutes is not None:
