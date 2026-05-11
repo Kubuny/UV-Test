@@ -36,7 +36,8 @@ class UVSensorLogger:
         """Initialize the UV sensor"""
         try:
             self.i2c = busio.I2C(board.SCL, board.SDA)
-            self.sensor = adafruit_veml6075.Adafruit_VEML6075(self.i2c)
+            # Use VEML6075 class (not Adafruit_VEML6075)
+            self.sensor = adafruit_veml6075.VEML6075(self.i2c)
             print("✓ UV Sensor initialized successfully")
             return True
         except Exception as e:
