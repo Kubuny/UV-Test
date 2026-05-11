@@ -38,7 +38,10 @@ class UVSensorLogger:
             self.i2c = busio.I2C(board.SCL, board.SDA)
             # VEML6075 sensor at address 0x74
             from adafruit_veml6075 import VEML6075
+            # Create sensor instance with I2C device, specifying the address
             self.sensor = VEML6075(self.i2c)
+            # Override the default address if needed
+            self.sensor._address = 0x74
             print("✓ UV Sensor initialized successfully")
             return True
         except Exception as e:
