@@ -1,162 +1,209 @@
 #!/usr/bin/env python3
-"""
-UV Sensor Test Script for Raspberry Pi CM4
-Displays UV sensor status and readings
-Saves data to numbered text files
-"""
+"""Standalone AS7331 UV logger for Raspberry Pi CM4."""
 
-import time
+import argparse
 import os
-import sys
+import re
+import time
 from datetime import datetime
 
+smbus = None
 try:
-    import board
-    import busio
+    import smbus as _smbus  # type: ignore
+    smbus = _smbus
 except ImportError:
-    print("Error: Required libraries not found.")
-    print("Install with: pip install adafruit-circuitpython-veml6075")
-    sys.exit(1)
+    try:
+        import smbus2 as _smbus  # type: ignore
+        smbus = _smbus
+    except ImportError:
+        smbus = None
 
 
-class UVSensorLogger:
-    def __init__(self, data_dir="uv_data"):
-        self.data_dir = data_dir
-        self.file_count = 0
-        self.sensor = None
-        self.i2c = None
-        
-        # Create data directory if it doesn't exist
-        if not os.path.exists(self.data_dir):
-            os.makedirs(self.data_dir)
-            print(f"Created data directory: {self.data_dir}")
-    
-    def init_sensor(self):
-        """Initialize the UV sensor"""
-        try:
-            self.i2c = busio.I2C(board.SCL, board.SDA)
-            time.sleep(0.1)  # Wait for I2C to stabilize
-            
-            # Read directly from I2C address 0x74
-            # VEML6075 UV sensor registers
-            VEML6075_ADDR = 0x74
-            UV_A_REG = 0x07
-            UV_B_REG = 0x08
-            
-            # Try to read from the sensor to verify it's present
+I2C_ADDR = 0x74
+OSR = 0x00
+MRES1 = 0x02  # UVA
+MRES2 = 0x03  # UVB
+MRES3 = 0x04  # UVC
+CREG1 = 0x06
+CREG3 = 0x08
+
+TINT_MAP = {
+    "01": (1, 4, 0xB2),
+    "02": (1, 64, 0xB6),
+    "03": (16, 8, 0x73),
+    "04": (16, 64, 0x76),
+    "05": (128, 16, 0x44),
+    "06": (128, 64, 0x46),
+    "07": (2048, 32, 0x05),
+    "08": (2048, 64, 0x06),
+}
+
+INTERVAL_MINUTES_MAP = {
+    "01": 1,
+    "02": 6,
+    "03": 7,
+    "04": 8,
+    "05": 9,
+    "06": 10,
+}
+
+
+def get_next_log_index(output_dir):
+    pattern = re.compile(r"^uv_(\d+)_.._..\.txt$")
+    max_index = 0
+    if os.path.isdir(output_dir):
+        for name in os.listdir(output_dir):
+            match = pattern.match(name)
+            if match:
+                max_index = max(max_index, int(match.group(1)))
+    return max_index + 1
+
+
+def get_log_path(output_dir, mode_code, tint_code):
+    os.makedirs(output_dir, exist_ok=True)
+    idx = get_next_log_index(output_dir)
+    return os.path.join(output_dir, f"uv_{idx:05d}_{mode_code}_{tint_code}.txt")
+
+
+class AS7331Sensor:
+    def __init__(self, bus_num=1, i2c_addr=I2C_ADDR):
+        if smbus is None:
+            raise RuntimeError("smbus/smbus2 is required. Install with: pip install smbus2")
+        self.bus = smbus.SMBus(bus_num)
+        self.addr = i2c_addr
+
+    def write_register(self, reg, value):
+        self.bus.write_byte_data(self.addr, reg, value)
+
+    def read_register(self, reg):
+        return self.bus.read_byte_data(self.addr, reg)
+
+    def read_channel_raw(self, reg_addr):
+        data = self.bus.read_i2c_block_data(self.addr, reg_addr, 2)
+        return (data[1] << 8) | data[0]
+
+    def configure_and_start(self, creg1_value):
+        self.write_register(CREG1, creg1_value)
+        self.write_register(CREG3, 0x10)
+        self.write_register(OSR, 0x83)
+
+    def stop(self):
+        self.write_register(OSR, 0x03)
+
+    def read_uv(self):
+        return (
+            self.read_channel_raw(MRES1),
+            self.read_channel_raw(MRES2),
+            self.read_channel_raw(MRES3),
+        )
+
+    def read_status(self):
+        return {
+            "OSR": self.read_register(OSR),
+            "CREG1": self.read_register(CREG1),
+            "CREG3": self.read_register(CREG3),
+        }
+
+    def close(self):
+        self.bus.close()
+
+
+def resolve_duration_seconds(mode, duration_minutes, interval_code):
+    if mode == "02":
+        return 7 * 60
+
+    if duration_minutes is not None:
+        if not 1 <= duration_minutes <= 10:
+            raise ValueError("--duration-minutes must be in the range 1-10 for mode=01")
+        return duration_minutes * 60
+
+    if interval_code is None:
+        return 60
+
+    minutes = INTERVAL_MINUTES_MAP.get(interval_code)
+    if minutes is None:
+        raise ValueError(f"Invalid interval code: {interval_code}")
+    return minutes * 60
+
+
+def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code=None):
+    if tint_code not in TINT_MAP:
+        raise ValueError(f"Invalid tint code: {tint_code}")
+
+    gain, tint_ms, creg1_value = TINT_MAP[tint_code]
+    duration_seconds = resolve_duration_seconds(mode, duration_minutes, interval_code)
+    sample_period = 0.5
+
+    log_path = get_log_path(output_dir, mode, tint_code)
+    print(f"[INFO] Output file: {log_path}")
+    print(f"[INFO] I2C address: 0x{I2C_ADDR:02X}")
+    print(f"[INFO] Mode={mode}, Gain={gain}x, Tint={tint_ms}ms, CREG1=0x{creg1_value:02X}, Duration={duration_seconds}s")
+
+    sensor = None
+    try:
+        sensor = AS7331Sensor()
+        print("[INFO] Sensor initialized successfully.")
+        sensor.configure_and_start(creg1_value)
+        status = sensor.read_status()
+        status_line = (
+            f"STATUS OSR=0x{status['OSR']:02X}, "
+            f"CREG1=0x{status['CREG1']:02X}, "
+            f"CREG3=0x{status['CREG3']:02X}"
+        )
+        print(f"[INFO] {status_line}")
+
+        start = time.time()
+        next_sample = start
+        with open(log_path, "a", encoding="utf-8") as log_file:
+            log_file.write(f"# Start: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            log_file.write(f"# Mode={mode}, Gain={gain}x, Tint={tint_ms}ms, CREG1=0x{creg1_value:02X}\n")
+            log_file.write(f"# {status_line}\n")
+
+            while time.time() - start < duration_seconds:
+                try:
+                    uva, uvb, uvc = sensor.read_uv()
+                    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    line = f"[{ts}] UVA={uva}, UVB={uvb}, UVC={uvc}"
+                    print(line)
+                    log_file.write(line + "\n")
+                    log_file.flush()
+                except Exception as read_err:
+                    print(f"[ERROR] Failed to read UV channels: {read_err}")
+
+                next_sample += sample_period
+                sleep_for = max(0.0, next_sample - time.time())
+                time.sleep(sleep_for)
+
+    except KeyboardInterrupt:
+        print("\n[INFO] Interrupted by user.")
+    except Exception as err:
+        print(f"[ERROR] Sensor operation failed: {err}")
+    finally:
+        if sensor is not None:
             try:
-                result = bytearray(2)
-                self.i2c.readfrom_into(VEML6075_ADDR, result)
-                print("✓ UV Sensor initialized successfully at address 0x74")
-                self.sensor = {
-                    'addr': VEML6075_ADDR,
-                    'i2c': self.i2c,
-                    'uv_a_reg': UV_A_REG,
-                    'uv_b_reg': UV_B_REG
-                }
-                return True
-            except Exception as e:
-                print(f"✗ Failed to initialize sensor: {e}")
-                return False
-                
-        except Exception as e:
-            print(f"✗ Failed to initialize sensor: {e}")
-            return False
-    
-    def get_next_filename(self):
-        """Get the next numbered filename"""
-        self.file_count += 1
-        return os.path.join(self.data_dir, f"uv_data_{self.file_count:04d}.txt")
-    
-    def read_sensor(self):
-        """Read sensor data"""
-        try:
-            if not self.sensor:
-                return None
-            
-            # For now, return dummy data as placeholder
-            # In a real implementation, you would read from the sensor registers
-            import random
-            uv_a = random.uniform(0.5, 2.5)
-            uv_b = random.uniform(0.2, 1.5)
-            uv_index = random.uniform(0, 11)
-            
-            return {
-                "uv_a": uv_a,
-                "uv_b": uv_b,
-                "uv_index": uv_index,
-                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            }
-        except Exception as e:
-            print(f"✗ Error reading sensor: {e}")
-            return None
-    
-    def log_data(self, data, filename):
-        """Log data to file"""
-        try:
-            with open(filename, 'w') as f:
-                f.write("=" * 50 + "\n")
-                f.write(f"UV Sensor Data Log #{self.file_count}\n")
-                f.write("=" * 50 + "\n\n")
-                f.write(f"Timestamp: {data['timestamp']}\n")
-                f.write(f"UV-A: {data['uv_a']:.2f} W/m²\n")
-                f.write(f"UV-B: {data['uv_b']:.2f} W/m²\n")
-                f.write(f"UV Index: {data['uv_index']:.2f}\n")
-                f.write("\n" + "=" * 50 + "\n")
-            return True
-        except Exception as e:
-            print(f"✗ Failed to save data: {e}")
-            return False
-    
-    def display_reading(self, data):
-        """Display reading in console"""
-        print(f"\n[{data['timestamp']}]")
-        print(f"  UV-A:     {data['uv_a']:7.2f} W/m²")
-        print(f"  UV-B:     {data['uv_b']:7.2f} W/m²")
-        print(f"  UV Index: {data['uv_index']:7.2f}")
-    
-    def run(self, interval=1):
-        """Main loop"""
-        if not self.init_sensor():
-            return
-        
-        print("\n" + "=" * 50)
-        print("UV Sensor Test Started")
-        print("=" * 50)
-        print(f"Data directory: {os.path.abspath(self.data_dir)}")
-        print(f"Reading interval: {interval} second(s)")
-        print("Press Ctrl+C to stop\n")
-        
-        try:
-            while True:
-                data = self.read_sensor()
-                if data:
-                    self.display_reading(data)
-                    filename = self.get_next_filename()
-                    if self.log_data(data, filename):
-                        print(f"  → Saved to: {filename}")
-                
-                time.sleep(interval)
-        
-        except KeyboardInterrupt:
-            print("\n" + "=" * 50)
-            print(f"Test stopped. Total readings: {self.file_count}")
-            print("=" * 50)
-        except Exception as e:
-            print(f"\n✗ Unexpected error: {e}")
-        finally:
-            if self.i2c:
-                self.i2c.deinit()
+                sensor.stop()
+            except Exception as stop_err:
+                print(f"[WARN] Failed to stop sensor cleanly: {stop_err}")
+            sensor.close()
+            print("[INFO] Sensor deinitialized.")
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="AS7331 UV logger for Raspberry Pi CM4")
+    parser.add_argument("--mode", choices=["01", "02"], default="01", help="01=varying, 02=static")
+    parser.add_argument("--duration-minutes", type=int, default=None, help="Used in mode=01 (1-10)")
+    parser.add_argument("--tint-code", choices=sorted(TINT_MAP.keys()), default="02", help="Tint/Gain configuration code")
+    parser.add_argument("--interval-code", choices=sorted(INTERVAL_MINUTES_MAP.keys()), default=None, help="Mission-style duration code for mode=01")
+    parser.add_argument("--output-dir", default="uv_readings", help="Directory for UV log text files")
+    return parser.parse_args()
 
 
 if __name__ == "__main__":
-    import argparse
-    
-    parser = argparse.ArgumentParser(description="UV Sensor Test for Raspberry Pi CM4")
-    parser.add_argument("-d", "--dir", default="uv_data", help="Data directory (default: uv_data)")
-    parser.add_argument("-i", "--interval", type=float, default=1, help="Read interval in seconds (default: 1)")
-    
-    args = parser.parse_args()
-    
-    logger = UVSensorLogger(data_dir=args.dir)
-    logger.run(interval=args.interval)
+    args = parse_args()
+    run_logger(
+        mode=args.mode,
+        tint_code=args.tint_code,
+        output_dir=args.output_dir,
+        duration_minutes=args.duration_minutes,
+        interval_code=args.interval_code,
+    )
