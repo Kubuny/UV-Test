@@ -39,7 +39,7 @@ TINT_MAP = {
 }
 
 INTERVAL_MINUTES_MAP = {
-    # Reflects existing interval-code behavior from Mission.py (01=1, 02-06=6-10 minutes).
+    # Reflects required interval-code behavior (01=1, 02=6, 03=7, 04=8, 05=9, 06=10 minutes).
     "01": 1,
     "02": 6,
     "03": 7,
@@ -198,8 +198,8 @@ def parse_args():
     parser = argparse.ArgumentParser(description="AS7331 UV logger for Raspberry Pi CM4")
     parser.add_argument("--mode", choices=["01", "02"], default="01", help="01=varying, 02=static")
     parser.add_argument("--duration-minutes", type=int, default=None, help="Used in mode=01 (1-10)")
-    parser.add_argument("--tint-code", choices=sorted(TINT_MAP.keys()), default="02", help="Tint/Gain code (01=1x/4ms, 02=1x/64ms, ..., 08=2048x/64ms)")
-    parser.add_argument("--interval-code", choices=sorted(INTERVAL_MINUTES_MAP.keys()), default=None, help="Duration code for mode=01 (01=1min, 02=6min, ..., 06=10min)")
+    parser.add_argument("--tint-code", choices=sorted(TINT_MAP.keys()), default="02", help="Tint/Gain code (01=1x/4ms, 02=1x/64ms, 03=16x/8ms, 04=16x/64ms, 05=128x/16ms, 06=128x/64ms, 07=2048x/32ms, 08=2048x/64ms)")
+    parser.add_argument("--interval-code", choices=sorted(INTERVAL_MINUTES_MAP.keys()), default=None, help="Duration code for mode=01 (01=1min, 02=6min, 03=7min, 04=8min, 05=9min, 06=10min)")
     parser.add_argument("--output-dir", default="uv_readings", help="Directory for UV log text files")
     return parser.parse_args()
 
