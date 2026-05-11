@@ -214,7 +214,7 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
                             time.sleep(READ_RETRY_DELAY_SECONDS)
                     else:
                         raise RuntimeError(
-                            f"Failed to read UV data after {READ_RETRY_COUNT} retries."
+                            f"Failed to read UV data after {READ_RETRY_COUNT} retries: {last_err}"
                         ) from last_err
 
                     if uva == 0 and uvb == 0 and uvc == 0:
@@ -224,7 +224,9 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
 
                     if zero_streak >= ZERO_SAMPLE_RESET_THRESHOLD:
                         reinitialize_sensor(
-                            "UVA/UVB/UVC are zero; reinitializing sensor. Check I2C address/wiring if this continues."
+                            "UVA/UVB/UVC are zero for "
+                            f"{ZERO_SAMPLE_RESET_THRESHOLD} consecutive readings; "
+                            "reinitializing sensor. Check I2C address/wiring if this continues."
                         )
                         zero_streak = 0
                         continue
