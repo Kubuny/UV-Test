@@ -76,6 +76,18 @@ def get_log_path(output_dir, mode_code, tint_code):
     return os.path.join(output_dir, f"uv_{idx:05d}_{mode_code}_{tint_code}.txt")
 
 
+def create_unique_log_file(output_dir, mode_code, tint_code):
+    os.makedirs(output_dir, exist_ok=True)
+    idx = get_next_log_index(output_dir)
+    while True:
+        log_path = os.path.join(output_dir, f"uv_{idx:05d}_{mode_code}_{tint_code}.txt")
+        try:
+            fd = os.open(log_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL)
+            return log_path, os.fdopen(fd, "w", encoding="utf-8")
+        except FileExistsError:
+            idx += 1
+
+
 class AS7331Sensor:
     def __init__(self, bus_num=1, i2c_addr=I2C_ADDR):
         if smbus_module is None:
@@ -132,6 +144,7 @@ def resolve_duration_seconds(mode, duration_minutes, interval_code):
     if interval_code is None:
         return DEFAULT_VARYING_MODE_DURATION_SECONDS
 
+    # Keep this check for direct function usage where argparse choices are not applied.
     minutes = INTERVAL_MINUTES_MAP.get(interval_code)
     if minutes is None:
         raise ValueError(f"Invalid interval code: {interval_code}")
@@ -146,7 +159,10 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
     duration_seconds = resolve_duration_seconds(mode, duration_minutes, interval_code)
     sample_period = SAMPLE_PERIOD_SECONDS
 
-    log_path = get_log_path(output_dir, mode, tint_code)
+    if mode == "02" and (duration_minutes is not None or interval_code is not None):
+        print("[INFO] mode=02 uses fixed 7 minutes; duration/interval options are ignored.")
+
+    log_path, log_file = create_unique_log_file(output_dir, mode, tint_code)
     print(f"[INFO] Output file: {log_path}")
     print(f"[INFO] I2C address: 0x{I2C_ADDR:02X}")
     print(f"[INFO] Mode={mode}, Gain={gain}x, Tint={tint_ms}ms, CREG1=0x{creg1_value:02X}, Duration={duration_seconds}s")
@@ -166,7 +182,7 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
 
         start = time.time()
         next_sample = start
-        with open(log_path, "a", encoding="utf-8") as log_file:
+        with log_file:
             log_file.write(f"# Start: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             log_file.write(f"# Mode={mode}, Gain={gain}x, Tint={tint_ms}ms, CREG1=0x{creg1_value:02X}\n")
             log_file.write(f"# {status_line}\n")
@@ -203,9 +219,9 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
 def parse_args():
     parser = argparse.ArgumentParser(description="AS7331 UV logger for Raspberry Pi CM4")
     parser.add_argument("--mode", choices=["01", "02"], default="01", help="01=varying, 02=static")
-    parser.add_argument("--duration-minutes", type=int, default=None, help="Used in mode=01 (1-10)")
+    parser.add_argument("--duration-minutes", type=int, default=None, help="Used in mode=01 (1-10); ignored in mode=02")
     parser.add_argument("--tint-code", choices=sorted(TINT_MAP.keys()), default="02", help=f"Tint/Gain code ({TINT_HELP_TEXT})")
-    parser.add_argument("--interval-code", choices=sorted(INTERVAL_MINUTES_MAP.keys()), default=None, help=f"Duration code for mode=01 ({INTERVAL_HELP_TEXT})")
+    parser.add_argument("--interval-code", choices=sorted(INTERVAL_MINUTES_MAP.keys()), default=None, help=f"Duration code for mode=01 ({INTERVAL_HELP_TEXT}); ignored in mode=02")
     parser.add_argument("--output-dir", default="uv_readings", help="Directory for UV log text files")
     return parser.parse_args()
 
