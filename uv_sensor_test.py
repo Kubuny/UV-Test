@@ -154,6 +154,16 @@ def resolve_duration_seconds(mode, duration_minutes, interval_code):
     return minutes * 60
 
 
+def reinitialize_sensor(sensor, creg1_value, warmup_seconds, reason):
+    print(f"[WARN] {reason}")
+    try:
+        sensor.stop()
+    except Exception as stop_err:
+        print(f"[WARN] Failed to stop sensor cleanly: {stop_err}")
+    sensor.configure_and_start(creg1_value)
+    time.sleep(warmup_seconds)
+
+
 def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code=None):
     if tint_code not in TINT_MAP:
         raise ValueError(f"Invalid tint code: {tint_code}")
@@ -185,15 +195,6 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
         )
         print(f"[INFO] {status_line}")
 
-        def reinitialize_sensor(reason):
-            print(f"[WARN] {reason}")
-            try:
-                sensor.stop()
-            except Exception as stop_err:
-                print(f"[WARN] Failed to stop sensor cleanly: {stop_err}")
-            sensor.configure_and_start(creg1_value)
-            time.sleep(warmup_seconds)
-
         start = time.time()
         next_sample = start
         zero_streak = 0
@@ -214,7 +215,8 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
                             time.sleep(READ_RETRY_DELAY_SECONDS)
                     else:
                         raise RuntimeError(
-                            f"Failed to read UV data after {READ_RETRY_COUNT} retries: {last_err}"
+                            f"Failed to read UV data after {READ_RETRY_COUNT} retries: {last_err}. "
+                            "Check I2C connection and sensor power."
                         ) from last_err
 
                     if uva == 0 and uvb == 0 and uvc == 0:
@@ -224,6 +226,9 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
 
                     if zero_streak >= ZERO_SAMPLE_RESET_THRESHOLD:
                         reinitialize_sensor(
+                            sensor,
+                            creg1_value,
+                            warmup_seconds,
                             "UVA/UVB/UVC are zero for "
                             f"{ZERO_SAMPLE_RESET_THRESHOLD} consecutive readings; "
                             "reinitializing sensor. Check I2C address/wiring if this continues."
@@ -238,7 +243,7 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
                     log_file.flush()
                 except Exception as read_err:
                     print(f"[ERROR] Failed to read UV channels: {read_err}")
-                    reinitialize_sensor("Reinitializing after read failure.")
+                    reinitialize_sensor(sensor, creg1_value, warmup_seconds, "Reinitializing after read failure.")
                     zero_streak = 0
 
                 next_sample += sample_period

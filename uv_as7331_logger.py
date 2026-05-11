@@ -37,7 +37,7 @@ def stop_sensor(bus):
     bus.write_byte_data(AS7331_ADDR, OSR, 0x03)
 
 def get_next_filename(base_dir):
-    # base_dir/uv_data_yyyymmdd_NNN.txt
+    # base_dir/uv_data_YYYYMMDD_NNN.txt
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
     base = datetime.now().strftime("uv_data_%Y%m%d")
