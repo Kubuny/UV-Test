@@ -51,6 +51,9 @@ STATIC_MODE_DURATION_MINUTES = 7
 DEFAULT_VARYING_MODE_DURATION_SECONDS = 60
 SAMPLE_PERIOD_SECONDS = 0.5
 MIN_LOOP_SLEEP_SECONDS = 0.01
+READ_RETRY_COUNT = 3
+READ_RETRY_DELAY_SECONDS = 0.05
+ZERO_SAMPLE_RESET_THRESHOLD = 3
 TINT_HELP_TEXT = ", ".join(
     f"{code}={gain}x/{tint_ms}ms" for code, (gain, tint_ms, _creg1) in sorted(TINT_MAP.items())
 )
@@ -158,6 +161,7 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
     gain, tint_ms, creg1_value = TINT_MAP[tint_code]
     duration_seconds = resolve_duration_seconds(mode, duration_minutes, interval_code)
     sample_period = SAMPLE_PERIOD_SECONDS
+    warmup_seconds = max(MIN_LOOP_SLEEP_SECONDS, tint_ms / 1000)
 
     if mode == "02" and (duration_minutes is not None or interval_code is not None):
         print("[INFO] mode=02 uses fixed 7 minutes; duration/interval options are ignored.")
@@ -172,6 +176,7 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
         sensor = AS7331Sensor()
         print("[INFO] Sensor initialized successfully.")
         sensor.configure_and_start(creg1_value)
+        time.sleep(warmup_seconds)
         status = sensor.read_status()
         status_line = (
             f"STATUS OSR=0x{status['OSR']:02X}, "
@@ -182,6 +187,7 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
 
         start = time.time()
         next_sample = start
+        zero_streak = 0
         with log_file:
             log_file.write(f"# Start: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
             log_file.write(f"# Mode={mode}, Gain={gain}x, Tint={tint_ms}ms, CREG1=0x{creg1_value:02X}\n")
@@ -189,7 +195,33 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
 
             while time.time() - start < duration_seconds:
                 try:
-                    uva, uvb, uvc = sensor.read_uv()
+                    last_err = None
+                    for _ in range(READ_RETRY_COUNT):
+                        try:
+                            uva, uvb, uvc = sensor.read_uv()
+                            break
+                        except Exception as read_err:
+                            last_err = read_err
+                            time.sleep(READ_RETRY_DELAY_SECONDS)
+                    else:
+                        raise last_err
+
+                    if uva == 0 and uvb == 0 and uvc == 0:
+                        zero_streak += 1
+                    else:
+                        zero_streak = 0
+
+                    if zero_streak >= ZERO_SAMPLE_RESET_THRESHOLD:
+                        print("[WARN] UVA/UVB/UVC are zero; reinitializing sensor. Check I2C address/wiring if this continues.")
+                        try:
+                            sensor.stop()
+                        except Exception as stop_err:
+                            print(f"[WARN] Failed to stop sensor cleanly: {stop_err}")
+                        sensor.configure_and_start(creg1_value)
+                        time.sleep(warmup_seconds)
+                        zero_streak = 0
+                        continue
+
                     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                     line = f"[{ts}] UVA={uva}, UVB={uvb}, UVC={uvc}"
                     print(line)
@@ -197,6 +229,13 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
                     log_file.flush()
                 except Exception as read_err:
                     print(f"[ERROR] Failed to read UV channels: {read_err}")
+                    try:
+                        sensor.stop()
+                    except Exception as stop_err:
+                        print(f"[WARN] Failed to stop sensor cleanly: {stop_err}")
+                    sensor.configure_and_start(creg1_value)
+                    time.sleep(warmup_seconds)
+                    zero_streak = 0
 
                 next_sample += sample_period
                 sleep_for = max(MIN_LOOP_SLEEP_SECONDS, next_sample - time.time())

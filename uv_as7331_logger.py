@@ -5,23 +5,34 @@ from datetime import datetime
 
 import smbus2
 
-# AS7331 default I2C address (例: 0x39)
-AS7331_ADDR = 0x39
+# AS7331 default I2C address (例: 0x74)
+AS7331_ADDR = 0x74
 
-# レジスタアドレス（仮: データシート参照。機種により異なる場合あり）
-REG_UVA = 0x0C
-REG_UVB = 0x0E
-REG_UVC = 0x10
+# レジスタアドレス（AS7331 datasheet例）
+OSR = 0x00
+CREG1 = 0x06
+CREG3 = 0x08
+MRES1 = 0x02  # UVA
+MRES2 = 0x03  # UVB
+MRES3 = 0x04  # UVC
 
 def read_uv(bus):
     # 2バイト（MSB, LSB）で16ビット値を読む
     def read16(reg):
         data = bus.read_i2c_block_data(AS7331_ADDR, reg, 2)
-        return (data[0] << 8) | data[1]
-    uva = read16(REG_UVA)
-    uvb = read16(REG_UVB)
-    uvc = read16(REG_UVC)
+        return (data[1] << 8) | data[0]
+    uva = read16(MRES1)
+    uvb = read16(MRES2)
+    uvc = read16(MRES3)
     return uva, uvb, uvc
+
+def setup_sensor(bus, creg1_value=0xB6):
+    bus.write_byte_data(AS7331_ADDR, CREG1, creg1_value)
+    bus.write_byte_data(AS7331_ADDR, CREG3, 0x10)
+    bus.write_byte_data(AS7331_ADDR, OSR, 0x83)
+
+def stop_sensor(bus):
+    bus.write_byte_data(AS7331_ADDR, OSR, 0x03)
 
 def get_next_filename(base_dir):
     # base_dir/uv_data_YYYYmmdd_NNN.txt
@@ -39,6 +50,8 @@ def main():
 
     print("AS7331 UV sensor logger (one-shot)")
     try:
+        setup_sensor(bus)
+        time.sleep(0.05)
         uva, uvb, uvc = read_uv(bus)
         print(f"UVA: {uva}")
         print(f"UVB: {uvb}")
@@ -54,6 +67,10 @@ def main():
     except Exception as e:
         print("Error communicating with AS7331:", e)
     finally:
+        try:
+            stop_sensor(bus)
+        except Exception:
+            pass
         bus.close()
 
 if __name__ == "__main__":
