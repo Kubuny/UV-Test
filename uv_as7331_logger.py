@@ -5,10 +5,10 @@ from datetime import datetime
 
 import smbus2
 
-# AS7331 default I2C address (例: 0x74)
+# AS7331 default I2C address (e.g., 0x74)
 AS7331_ADDR = 0x74
 
-# レジスタアドレス（AS7331 datasheet例）
+# Register addresses (AS7331 datasheet example)
 OSR = 0x00
 CREG1 = 0x06
 CREG3 = 0x08
@@ -17,7 +17,7 @@ MRES2 = 0x03  # UVB
 MRES3 = 0x04  # UVC
 
 def read_uv(bus):
-    # 2バイト（MSB, LSB）で16ビット値を読む
+    # Read 16-bit value from 2 bytes (LSB, MSB)
     def read16(reg):
         data = bus.read_i2c_block_data(AS7331_ADDR, reg, 2)
         return (data[1] << 8) | data[0]
@@ -35,7 +35,7 @@ def stop_sensor(bus):
     bus.write_byte_data(AS7331_ADDR, OSR, 0x03)
 
 def get_next_filename(base_dir):
-    # base_dir/uv_data_YYYYmmdd_NNN.txt
+    # base_dir/uv_data_YYYYMMDD_NNN.txt
     if not os.path.exists(base_dir):
         os.makedirs(base_dir)
     base = datetime.now().strftime("uv_data_%Y%m%d")
