@@ -49,10 +49,12 @@ INTERVAL_MINUTES_MAP = {
 }
 STATIC_MODE_DURATION_MINUTES = 7
 DEFAULT_VARYING_MODE_DURATION_SECONDS = 60
+SAMPLE_PERIOD_SECONDS = 0.5
+MIN_LOOP_SLEEP_SECONDS = 0.01
 
 
 def get_next_log_index(output_dir):
-    pattern = re.compile(r"^uv_(\d+)_.._..\.txt$")
+    pattern = re.compile(r"^uv_(\d{5,})_\d{2}_\d{2}\.txt$")
     max_index = 0
     if os.path.isdir(output_dir):
         for name in os.listdir(output_dir):
@@ -136,7 +138,7 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
 
     gain, tint_ms, creg1_value = TINT_MAP[tint_code]
     duration_seconds = resolve_duration_seconds(mode, duration_minutes, interval_code)
-    sample_period = 0.5
+    sample_period = SAMPLE_PERIOD_SECONDS
 
     log_path = get_log_path(output_dir, mode, tint_code)
     print(f"[INFO] Output file: {log_path}")
@@ -175,7 +177,7 @@ def run_logger(mode, tint_code, output_dir, duration_minutes=None, interval_code
                     print(f"[ERROR] Failed to read UV channels: {read_err}")
 
                 next_sample += sample_period
-                sleep_for = max(0.0, next_sample - time.time())
+                sleep_for = max(MIN_LOOP_SLEEP_SECONDS, next_sample - time.time())
                 time.sleep(sleep_for)
 
     except KeyboardInterrupt:
@@ -203,6 +205,10 @@ def parse_args():
 
 
 if __name__ == "__main__":
+    if smbus_module is None:
+        print("[ERROR] smbus/smbus2 is required. Install with: pip install smbus2")
+        raise SystemExit(1)
+
     args = parse_args()
     run_logger(
         mode=args.mode,
